@@ -34,15 +34,15 @@ function loadNpmPlugins() {
         var name = p.replace(/@[^@\/]+$/, "") || p;
         var version = "";
         try {
-          // First try config-local node_modules, then global npm node_modules
-          var pkgPath = join(CONFIG_DIR, "node_modules", name, "package.json");
-          if (!existsSync(pkgPath)) {
-            // Global npm fallback (Windows: AppData/Roaming/npm/node_modules, Unix: prefix/lib/node_modules)
-            var globalNpm = process.platform === "win32"
-              ? join(homedir(), "AppData", "Roaming", "npm", "node_modules")
-              : join("/usr", "lib", "node_modules");
-            pkgPath = join(globalNpm, name, "package.json");
-          }
+          // OpenCode installs npm plugins into ~/.cache/opencode/node_modules
+          var cachePkg = join(homedir(), ".cache", "opencode", "node_modules", name, "package.json");
+          // Fallback: config-local node_modules, then global npm
+          var globalNpm = process.platform === "win32"
+            ? join(homedir(), "AppData", "Roaming", "npm", "node_modules")
+            : join("/usr", "lib", "node_modules");
+          var pkgPath = existsSync(cachePkg) ? cachePkg
+            : existsSync(join(CONFIG_DIR, "node_modules", name, "package.json")) ? join(CONFIG_DIR, "node_modules", name, "package.json")
+            : join(globalNpm, name, "package.json");
           if (existsSync(pkgPath)) {
             version = JSON.parse(readFileSync(pkgPath, "utf-8")).version || "";
           }
@@ -436,7 +436,6 @@ function getPluginActions(pitem) {
     a.push({ key: "enable-auto", label: "Enable auto-update" });
   }
   a.push({ key: "update", label: "Force rebuild & deploy" });
-  a.push({ key: "update-all", label: "Update all plugins" });
   a.push({ key: "commits", label: "Select specific commit (Downgrade)" });
   a.push({ key: "disable-plugin", label: "Disable plugin" });
   a.push({ key: "cancel", label: "Cancel" });
@@ -789,8 +788,8 @@ function buildPlugins(pushBody, pushFoot, cols, barW) {
     pushFoot("  " + DIM + "^v" + RST + "/" + DIM + "WS" + RST + " Move  " +
       DIM + "Enter" + RST + " Select  " +
       DIM + "U" + RST + " Update  " +
+      DIM + "A" + RST + " Update all  " +
       DIM + "D" + RST + " Disable  " +
-      DIM + "A" + RST + " Toggle auto  " +
       DIM + "Q" + RST + " Quit" + RST);
   }
 }
@@ -959,13 +958,20 @@ function handlePluginKey(key) {
       flash(updateCount > 0 ? updateCount + " update(s) available" : "All plugins up to date");
     }
     else if (key === "a") {
-      if (pluginItems.length > 0) {
-        var p = pluginItems[pcursor];
-        p.autoUpdate = !p.autoUpdate;
-        var plugins = loadPlugins();
-        var match = plugins.find(function(r) { return r.name === p.name; });
-        if (match) { match.autoUpdate = p.autoUpdate; savePlugins(plugins); }
-        flash(p.name + ": auto-update " + (p.autoUpdate ? "ON" : "OFF"));
+      var toUpdate = pluginItems.filter(function(p) { return p.updateAvail || !p.deployed; });
+      if (toUpdate.length === 0) {
+        flash("All plugins are already up to date.");
+      } else {
+        var errors = [];
+        for (var pi of toUpdate) {
+          flash("Updating " + pi.name + "...");
+          render();
+          var e = runPluginUpdate(pi);
+          if (e) errors.push(pi.name + ": " + e);
+        }
+        pluginItems = buildPluginList();
+        if (pcursor >= pluginItems.length) pcursor = Math.max(0, pluginItems.length - 1);
+        flash(errors.length > 0 ? errors.join("; ") : toUpdate.length + " plugin(s) updated. Restart OpenCode to apply.");
       }
     }
     else if (key === "u") {
@@ -1007,19 +1013,6 @@ function handlePluginKey(key) {
         pluginItems = buildPluginList();
         if (pcursor >= pluginItems.length) pcursor = Math.max(0, pluginItems.length - 1);
         flash(err ? pitem.name + ": " + err : pitem.name + " updated. Restart OpenCode to apply.");
-        mode = "list";
-      }
-      else if (action === "update-all") {
-        var errors = [];
-        for (var pi of pluginItems) {
-          flash("Updating " + pi.name + "...");
-          render();
-          var e = runPluginUpdate(pi);
-          if (e) errors.push(pi.name + ": " + e);
-        }
-        pluginItems = buildPluginList();
-        if (pcursor >= pluginItems.length) pcursor = Math.max(0, pluginItems.length - 1);
-        flash(errors.length > 0 ? errors.join("; ") : "All plugins updated. Restart OpenCode to apply.");
         mode = "list";
       }
       else if (action === "enable-auto" || action === "disable-auto") {
