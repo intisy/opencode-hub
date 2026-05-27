@@ -9,11 +9,11 @@ import { homedir } from "os";
 
   function findTuiScript() {
     // 1. Same directory as this plugin file (npm install case)
-    var sameDirPath = join(__dirname, "core/tui.js");
+    var sameDirPath = join(import.meta.dirname, "core/tui.js");
     if (existsSync(sameDirPath)) return sameDirPath;
   
     // 2. Find config dir, then check repos/intisy/opencode-hub/ (updater case)
-    var configDir = findConfigDir(__dirname);
+    var configDir = findConfigDir(import.meta.dirname);
   if (configDir) {
     var repoPath = join(configDir, "repos", "intisy", "opencode-hub", "core/tui.js");
     if (existsSync(repoPath)) return repoPath;
@@ -45,24 +45,19 @@ function getBinDir() {
   return join(homedir(), ".local", "bin");
 }
 
-function installOcCommand() {
-  var tuiPath = findTuiScript();
-  if (!tuiPath) return;
-
-  var binDir = getBinDir();
-  if (!existsSync(binDir)) try { mkdirSync(binDir, { recursive: true }); } catch {}
-
-  // Always keep binDir/core/tui.js in sync with the source (so `oc` always runs latest)
+  function installOcCommand() {
+    var tuiPath = findTuiScript();
+    if (!tuiPath) return;
+  
+    var binDir = getBinDir();
+    if (!existsSync(binDir)) try { mkdirSync(binDir, { recursive: true }); } catch {}
+    var coreDir = join(binDir, "core");
+    if (!existsSync(coreDir)) try { mkdirSync(coreDir, { recursive: true }); } catch {}
+  
+    // Always keep binDir/core/tui.js in sync with the source (so `oc` always runs latest)
   var binTuiPath = join(binDir, "core/tui.js");
   try {
     var srcContent = readFileSync(tuiPath, "utf-8");
-    
-    // Inject auth login interception specific to opencode
-    srcContent = srcContent.replace(
-      'process.on("SIGTERM", function() { cleanup(); process.exit(1); });',
-      'process.on("SIGTERM", function() { cleanup(); process.exit(1); });\n\n// --- INJECTED AUTH LOGIN INTERCEPTION ---\nif (process.argv[2] === "auth" && process.argv[3] === "login") {\n  var _code = require("child_process").spawnSync(process.argv[0], [require("path").join(__dirname, "..", "oc-auth.js")], { stdio: "inherit" }).status;\n  if (_code !== 42) process.exit(0);\n}\n// ----------------------------------------\n'
-    );
-
     var dstContent = existsSync(binTuiPath) ? readFileSync(binTuiPath, "utf-8") : null;
     if (srcContent !== dstContent) {
       writeFileSync(binTuiPath, srcContent, "utf-8");
@@ -79,11 +74,17 @@ function installOcCommand() {
     var cmdContent = '@echo off\r\n'
       + 'set "tmp=%TEMP%\\oc-output-%RANDOM%.tmp"\r\n'
       + 'set "OC_OUTPUT=%tmp%"\r\n'
-      + 'bun "' + tuiPath + '" %*\r\n'
-      + 'set /p dir=<"%tmp%" 2>nul\r\n'
-      + 'del "%tmp%" 2>nul\r\n'
+      + 'call bun "' + tuiPath + '" %*\r\n'
+      + 'set "EXIT_CODE=%ERRORLEVEL%"\r\n'
+      + 'if exist "%tmp%" set /p dir=<"%tmp%" 2>nul\r\n'
+      + 'if exist "%tmp%" del "%tmp%" 2>nul\r\n'
+      + 'if %EXIT_CODE% EQU 42 (\r\n'
+      + '  call opencode %*\r\n'
+      + '  exit /b\r\n'
+      + ')\r\n'
       + 'if defined dir (\r\n'
-      + '  cd /d "%dir%" && opencode\r\n'
+      + '  cd /d "%dir%"\r\n'
+      + '  call opencode\r\n'
       + ')\r\n';
     try { writeFileSync(cmdPath, cmdContent, "utf-8"); } catch {}
   } else {
@@ -92,8 +93,12 @@ function installOcCommand() {
     var shContent = '#!/bin/sh\n'
       + 'tmp=$(mktemp)\n'
       + 'OC_OUTPUT="$tmp" bun "' + tuiPathEscaped + '" "$@"\n'
+      + 'EXIT_CODE=$?\n'
       + 'dir=$(cat "$tmp" 2>/dev/null)\n'
       + 'rm -f "$tmp"\n'
+      + 'if [ $EXIT_CODE -eq 42 ]; then\n'
+      + '  exec opencode "$@"\n'
+      + 'fi\n'
       + 'if [ -n "$dir" ]; then\n'
       + '  cd "$dir" && opencode\n'
       + 'fi\n';
