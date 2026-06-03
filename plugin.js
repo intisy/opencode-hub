@@ -14,12 +14,15 @@ async function runUpdater() {
       const updaterModule = await import("file://" + updaterPath.replace(/\\/g, "/"));
       const updater = updaterModule.default || updaterModule;
       
+      if (typeof updater.earlyLaunch === 'function') {
+        updater.earlyLaunch(configDir);
+      }
+
       // Update core-hub
       updater.updatePlugin("core-hub", "https://github.com/intisy/core-hub.git");
       updater.deployToExecutionDir("core-hub", join(homedir(), ".local", "bin"));
 
       // Update plugins from plugins.json
-      const configDir = join(homedir(), ".config", "opencode");
       const pluginsJsonPath = join(configDir, "config", "plugins.json");
       if (existsSync(pluginsJsonPath)) {
         try {
@@ -31,6 +34,16 @@ async function runUpdater() {
               updater.updatePlugin(plugin.name, plugin.url, branch, commit);
               updater.deployToExecutionDir(plugin.name, join(configDir, "plugin"));
             }
+          }
+        } catch (e) {
+          console.error("[OpenCode Hub] Failed to parse plugins.json", e);
+        }
+      }
+    } catch (e) {
+      console.error("[OpenCode Hub] Failed to run plugin-updater", e);
+    }
+  }
+}
           }
         } catch (e) {
           console.error("[OpenCode Hub] Failed to parse plugins.json", e);
