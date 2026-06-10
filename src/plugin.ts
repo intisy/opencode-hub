@@ -124,7 +124,10 @@ function installOcWrapper(configDir: string) {
 }
 
 export async function cleanup(configDir?: string) {
-  const resolvedConfigDir = configDir ?? getAppConfigDir();
+  // opencode invokes every exported function as a plugin hook, passing a context
+  // object — only run when plugin-updater calls us with an explicit configDir string
+  if (typeof configDir !== "string") return;
+  const resolvedConfigDir = configDir;
   const binDir = getBinDir();
   const filesToRemove = [join(binDir, "oc"), join(binDir, "oc.cmd")];
   for (const f of filesToRemove) {
